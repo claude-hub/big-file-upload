@@ -1,8 +1,9 @@
 'use strict';
 
-const Controller = require('egg').Controller;
+const BaseController = require('./base');
+const fes = require('fs-extra');
 
-class HomeController extends Controller {
+class HomeController extends BaseController {
   async index() {
     const { ctx } = this;
     ctx.body = 'hi, egg';
@@ -10,11 +11,12 @@ class HomeController extends Controller {
 
   async upload() {
     const { ctx } = this;
-    console.log(ctx);
     const file = ctx.request.files[0];
-    const { name } = ctx.request.body;
-    console.log(name, file);
-    ctx.body = 'hi, egg';
+    const filePath = `${this.config.UPLOAD_DIR}/${file.filename}`;
+    await fes.move(file.filepath, filePath);
+    this.success({
+      url: `/public/${file.filename}`,
+    });
   }
 }
 
