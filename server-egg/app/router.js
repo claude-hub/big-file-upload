@@ -11,4 +11,6 @@ module.exports = app => {
 
   router.post('/uploadSlice', controller.home.uploadSlice);
   router.post('/mergeFile', controller.home.mergeFile);
+  router.post('/checkFile', controller.home.checkFile);
+
 };

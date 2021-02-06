@@ -40,6 +40,31 @@ class HomeController extends BaseController {
       url: `/public/upload/${hash}.${ext}`,
     });
   }
+
+  async checkFile() {
+    const { ctx } = this;
+    const { ext, hash } = ctx.request.body;
+    const filePath = path.resolve(this.config.UPLOAD_DIR, `${hash}.${ext}`);
+
+    let uploaded = false;
+    let uploadedList = [];
+    if (fse.existsSync(filePath)) {
+      // 文件存在
+      uploaded = true;
+    } else {
+      uploadedList = await this.getUploadedList(path.resolve(this.config.UPLOAD_DIR, hash));
+    }
+    this.success({
+      uploaded,
+      uploadedList,
+    });
+  }
+
+  async getUploadedList(dirPath) {
+    return fse.existsSync(dirPath)
+      ? (await fse.readdir(dirPath)).filter(name => name[0] !== '.')
+      : [];
+  }
 }
 
 module.exports = HomeController;

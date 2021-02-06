@@ -54,6 +54,19 @@ class UploadFile extends PureComponent {
       loading: false
     });
 
+    // 问一下后端，文件是否上传过，如果没有，是否有存在的切片
+    const { data: { data: { uploaded, uploadedList } } } = await axios.post('/api/checkFile', {
+      hash,
+      ext: file.name.split('.').pop()
+    });
+    if (uploaded) {
+      // 秒传
+      message.success({
+        content: '秒传成功'
+      });
+      return;
+    }
+    // 如果上传过
     const chunksUpload = chunks.map((chunk, index) => {
       // 切片的名字 hash+index
       const name = `${hash}-${index}`;
