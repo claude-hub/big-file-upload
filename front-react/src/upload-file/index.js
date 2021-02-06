@@ -46,10 +46,12 @@ class UploadFile extends PureComponent {
     // }
 
     const chunks = this.createFileChunk(file);
-    // const hash = await this.calculateHashWorker(chunks);
+    const hash = await this.calculateHashWorker(chunks);
     const hash1 = await this.calculateHashIdle(chunks);
-    // console.log(hash);
+    const hash2 = await this.calculateHashBloom(chunks);
+    console.log(hash);
     console.log(hash1);
+    console.log(hash2);
     this.setState({
       loading: false
     });
@@ -138,6 +140,49 @@ class UploadFile extends PureComponent {
       };
       // 浏览器一旦空闲，就会调用workLoop
       window.requestIdleCallback(workLoop);
+    });
+  }
+
+  async calculateHashBloom(chunks) {
+    // 借鉴布隆过滤器  判断一个数据存在与否
+    // 第一个和最后一个全量hash，中间部分，取前中后的2个字节hash, 这样md5的文件总是差不多大。大大提高md5的效率
+    // 1个G的文件，抽样后5M以内
+    // hash一样，文件不一定一样
+    // hash不一样，文件一定不一样
+    return new Promise(resolve => {
+      const spark = new sparkMD5.ArrayBuffer();
+      const reader = new FileReader();
+
+      const { file } = this.state;
+      const { size } = file;
+      const offset = 2 * 1024 * 1024;
+      // 第一个2M，最后一个区块数据全要
+      const bloomChunks = [file.slice(0, offset)];
+
+      let cur = offset;
+      while (cur < size) {
+        if (cur + offset >= size) {
+          // 最后一个区快
+          bloomChunks.push(file.slice(cur, cur + offset));
+        } else {
+          // 中间的区块
+          const mid = cur + offset / 2;
+          const end = cur + offset;
+          bloomChunks.push(file.slice(cur, cur + 2));
+          bloomChunks.push(file.slice(mid, mid + 2));
+          bloomChunks.push(file.slice(end - 2, end));
+        }
+        cur += offset;
+      }
+      // 中间的，取前中后各2各字节
+      reader.readAsArrayBuffer(new Blob(bloomChunks));
+      reader.onload = e => {
+        spark.append(e.target.result);
+        this.setState({
+          hashProgress: 100
+        });
+        resolve(spark.end());
+      };
     });
   }
 
