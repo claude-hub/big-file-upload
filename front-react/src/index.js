@@ -1,8 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
-import Upload from './upload';
+import 'antd/dist/antd.css';
+import UploadFile from './upload-file';
 
 ReactDOM.render(
-  <Upload />,
+  <UploadFile />,
   document.getElementById('root')
 );
