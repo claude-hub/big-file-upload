@@ -19,3 +19,19 @@ nav {
 nav a {
   margin: 0 24px;
 }
+
+.flex {
+  display: flex;
+  align-items: center;
+  margin: 16px 0;
+}
+
+.flex div:first-child {
+  flex: 0 0 auto;
+}
+
+.content {
+  width: 500px;
+  padding-top: 60px;
+  margin: auto;
+}
