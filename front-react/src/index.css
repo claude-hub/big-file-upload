@@ -35,3 +35,29 @@ nav a {
   padding-top: 60px;
   margin: auto;
 }
+
+
+.cube-loading {
+  display: flex;
+  flex-flow: row wrap;
+  align-content: flex-start;
+}
+
+.cube-loading span {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  border: 1px solid #eee;
+}
+
+.cube-loading span.error {
+  background-color: red;
+}
+
+.cube-loading span.success {
+  background-color: green;
+}
+
+.cube-loading span.loading {
+  background-color: yellow;
+}

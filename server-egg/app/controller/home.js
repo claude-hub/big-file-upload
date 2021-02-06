@@ -22,6 +22,12 @@ class HomeController extends BaseController {
 
   async uploadSlice() {
     const { ctx } = this;
+    // 报错
+    // if (Math.random() > 0.3) {
+    //   // eslint-disable-next-line no-return-assign
+    //   return ctx.status = 500;
+    // }
+
     const file = ctx.request.files[0];
     const { hash, name } = ctx.request.body;
     const chunkPath = path.resolve(this.config.UPLOAD_DIR, hash);

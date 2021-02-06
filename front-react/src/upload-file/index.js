@@ -12,7 +12,8 @@ class UploadFile extends PureComponent {
       file: null,
       progress: 0, // 上传进度条
       hashProgress: 0, // 计算md5的进度条
-      loading: false
+      loading: false,
+      uploadChunks: [] // 上传后端的块
     };
     this.worker = null;
   }
@@ -74,10 +75,17 @@ class UploadFile extends PureComponent {
         hash,
         name,
         index,
-        chunk: chunk.file
+        chunk: chunk.file,
+        // 设置进度条，已经上传的，设为100
+        progress: uploadedList.indexOf(name) > -1 ? 100 : 0
       };
     });
-    await this.uploadChunks(chunksUpload);
+
+    this.setState({
+      uploadChunks: chunksUpload
+    });
+
+    await this.uploadChunks(chunksUpload, uploadedList);
 
     await this.mergeRequest(hash);
 
@@ -165,23 +173,39 @@ class UploadFile extends PureComponent {
     window.requestIdleCallback(workLoop);
   })
 
-  uploadChunks = async (chunks) => {
-    const requests = chunks.map((chunk, index) => {
+  uploadChunks = async (chunks, uploadedList) => {
+    const requests = chunks
+      // 断点续传, 过滤掉已经上传的chunks
+      .filter(chunk => uploadedList.indexOf(chunk.name) === -1)
+      .map((chunk) => {
       // 转成promise
-      const form = new FormData();
-      form.append('chunk', chunk.chunk);
-      form.append('hash', chunk.hash);
-      form.append('name', chunk.name);
-      return { form, index: chunk.index, error: 0 };
-    }).map(({ form, index }) => axios.post('/api/uploadSlice', form, {
-      onUploadProgress: progress => {
-        // 不是整体的进度条了，而是每个区块有自己的进度条，整体的进度条需要计算
-        chunks[index].progress = Number(
-          ((progress.loaded / progress.total) * 100).toFixed(2)
-        );
-      }
-    }));
-    await Promise.all(requests);
+        const form = new FormData();
+        form.append('chunk', chunk.chunk);
+        form.append('hash', chunk.hash);
+        form.append('name', chunk.name);
+        return { form, index: chunk.index, error: 0 };
+      });
+      // .map(({ form, index }) => axios.post('/api/uploadSlice', form, {
+      //   onUploadProgress: progress => {
+      //     // 不是整体的进度条了，而是每个区块有自己的进度条，整体的进度条需要计算
+      //     this.setState(prev => {
+      //       const stateChunks = prev.uploadChunks.map((chunk, i) => {
+      //         if (i === index) {
+      //           chunk.progress = Number(
+      //             ((progress.loaded / progress.total) * 100).toFixed(2)
+      //           );
+      //         }
+      //         return chunk;
+      //       });
+      //       return {
+      //         uploadChunks: stateChunks
+      //       };
+      //     });
+      //   }
+      // }));
+    // await Promise.all(requests);
+    // Promise.all一次发生了全部是请求，会阻塞，而且还没有超时重试
+    await this.sendRequest(requests);
   }
 
   mergeRequest = async (hash) => {
@@ -193,8 +217,81 @@ class UploadFile extends PureComponent {
     });
   }
 
+  async sendRequest(chunks, limit = 2) {
+    return new Promise((resolve, reject) => {
+      const len = chunks.length;
+      let counter = 0;
+      let isStop = false;
+      const start = async () => {
+        if (isStop) {
+          return;
+        }
+        const task = chunks.shift();
+        if (task) {
+          const { form, index } = task;
+
+          try {
+            await axios.post('/api/uploadSlice', form, {
+              onUploadProgress: progress => {
+                this.setState(prev => {
+                  const stateChunks = prev.uploadChunks.map((chunk, i) => {
+                    if (i === index) {
+                      chunk.progress = Number(
+                        ((progress.loaded / progress.total) * 100).toFixed(2)
+                      );
+                    }
+                    return chunk;
+                  });
+                  return {
+                    uploadChunks: stateChunks
+                  };
+                });
+              }
+            });
+            if (counter === len - 1) {
+              // 最后一个任务
+              resolve();
+            } else {
+              counter += 1;
+              // 启动下一个任务
+              start();
+            }
+          } catch (e) {
+            this.setState(prev => {
+              prev.uploadChunks[index].progress = -1;
+              return {
+                uploadChunks: prev.uploadChunks
+              };
+            });
+            if (task.error < 3) {
+              task.error += 1;
+              chunks.unshift(task);
+              start();
+            } else {
+              // 错误三次
+              isStop = true;
+              reject();
+            }
+          }
+        }
+      };
+
+      while (limit > 0) {
+        // 启动limit个任务
+        // 模拟一下延迟
+        // setTimeout(() => {
+        //   start();
+        // }, Math.random() * 2000);
+        start();
+        limit -= 1;
+      }
+    });
+  }
+
   render() {
-    const { progress, hashProgress, loading } = this.state;
+    const {
+      progress, hashProgress, loading, uploadChunks
+    } = this.state;
     return (
       <div className="content">
         <input type="file" onChange={this.handleChange} />
@@ -216,6 +313,18 @@ class UploadFile extends PureComponent {
             Upload
           </Button>
         </p>
+
+        <div className="cube-loading">
+          {uploadChunks.map(chunk => (
+            <span
+              key={chunk.name} className={
+                // eslint-disable-next-line no-nested-ternary
+                chunk.progress < 0 ? 'error'
+                  : chunk.progress === 100 ? 'success' : 'loading'
+              }>
+            </span>
+          ))}
+        </div>
       </div>
     );
   }
