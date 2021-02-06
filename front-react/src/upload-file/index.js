@@ -1,5 +1,6 @@
 import React, { PureComponent } from 'react';
 import { Button, Progress, message } from 'antd';
+import sparkMD5 from 'spark-md5';
 import axios from 'axios';
 import { isImage } from '../utils';
 
@@ -45,8 +46,10 @@ class UploadFile extends PureComponent {
     // }
 
     const chunks = this.createFileChunk(file);
-    const hash = await this.calculateHashWorker(chunks);
-    console.log(chunks, hash);
+    // const hash = await this.calculateHashWorker(chunks);
+    const hash1 = await this.calculateHashIdle(chunks);
+    // console.log(hash);
+    console.log(hash1);
     this.setState({
       loading: false
     });
@@ -89,6 +92,52 @@ class UploadFile extends PureComponent {
           resolve(hash);
         }
       };
+    });
+  }
+
+  // 60fps
+  // 1秒渲染60次 渲染1次 1帧，大概16.6ms
+  // |帧(system task，render，script)空闲时间  |帧 painting idle   |帧   |帧   |
+  // 借鉴fiber架构
+  async calculateHashIdle(chunks) {
+    return new Promise(resolve => {
+      const spark = new sparkMD5.ArrayBuffer();
+      let count = 0;
+
+      const appendToSpark = async file => new Promise(resolveSpark => {
+        const reader = new FileReader();
+        reader.readAsArrayBuffer(file);
+        reader.onload = e => {
+          spark.append(e.target.result);
+          resolveSpark();
+        };
+      });
+      const workLoop = async deadline => {
+        // timeRemaining获取当前帧的剩余时间
+        while (count < chunks.length && deadline.timeRemaining() > 1) {
+          // 空闲时间，且有任务
+          // eslint-disable-next-line no-await-in-loop
+          await appendToSpark(chunks[count].file);
+          count += 1;
+          if (count < chunks.length) {
+            const hashProgress = Number(
+              ((100 * count) / chunks.length).toFixed(2)
+            );
+            this.setState({
+              hashProgress
+            });
+          } else {
+            this.setState({
+              hashProgress: 100
+            });
+            resolve(spark.end());
+          }
+        }
+        // 下次有空闲时间了继续执行workLoop
+        window.requestIdleCallback(workLoop);
+      };
+      // 浏览器一旦空闲，就会调用workLoop
+      window.requestIdleCallback(workLoop);
     });
   }
 
