@@ -1,21 +1,29 @@
 import React, { PureComponent } from 'react';
-import { Button } from 'antd';
+import { Button, Progress, message } from 'antd';
 import axios from 'axios';
+import { isImage } from '../utils';
 
 class UploadFile extends PureComponent {
   constructor(props) {
     super(props);
     this.state = {
-      file: null
+      file: null,
+      percent: 0
     };
   }
 
-  // componentDidMount() {
-  //   axios.get('/api/user');
-  // }
-
-  handleChange = (e) => {
+  handleChange = async (e) => {
     const [file] = e.target.files;
+    console.log(file);
+    if (!await isImage(file)) {
+      message.error({
+        content: '文件不是gif和png格式'
+      });
+    } else {
+      message.success({
+        content: '文件格式正确'
+      });
+    }
     if (!file) return;
     this.setState({
       file
@@ -27,16 +35,25 @@ class UploadFile extends PureComponent {
     const from = new FormData();
     from.append('name', 'file');
     from.append('file', file);
-    const res = axios.post('/api/upload', from);
+    const res = axios.post('/api/upload', from, {
+      onUploadProgress: progress => {
+        const { loaded, total } = progress;
+        const percent = Number(((loaded / total) * 100).toFixed(2));
+        this.setState({
+          percent
+        });
+      }
+    });
     console.log(res);
   }
 
   render() {
-    const { file } = this.state;
+    const { percent } = this.state;
     return (
-      <div>
+      <div style={{ width: 300, padding: '60px 32px', margin: 'auto' }}>
         <input type="file" onChange={this.handleChange} />
-        <Button type="primary" onClick={this.handleClick}>Upload</Button>
+        <Progress percent={percent} />
+        <Button type="primary" size="small" onClick={this.handleClick}>Upload</Button>
       </div>
     );
   }
