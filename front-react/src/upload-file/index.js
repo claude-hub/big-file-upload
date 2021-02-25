@@ -2,18 +2,18 @@ import React, { PureComponent } from 'react';
 import { Button, Progress, message } from 'antd';
 import sparkMD5 from 'spark-md5';
 import axios from 'axios';
-import { isImage } from '../utils';
 
-const CHUNK_SIZE = 1 * 1024 * 1024;
+// 定义上传的每个小块的大小
+const CHUNK_SIZE = 10 * 1024 * 1024;
 class UploadFile extends PureComponent {
   constructor(props) {
     super(props);
     this.state = {
       file: null,
-      progress: 0, // 上传进度条
       hashProgress: 0, // 计算md5的进度条
       loading: false,
-      uploadChunks: [] // 上传后端的块
+      uploadChunks: [], // 上传后端的块
+      url: '' // 上传成功后的url
     };
     this.worker = null;
   }
@@ -31,79 +31,70 @@ class UploadFile extends PureComponent {
     if (!file) return;
     this.setState({
       loading: true,
-      progress: 0,
       hashProgress: 0
     });
+    try {
+    // 分片
+      const chunks = this.createFileChunk(file);
+      // 每片计算hash
+      const hash = await this.calculateHashWorker(chunks);
+      // const hash1 = await this.calculateHashIdle(chunks);
 
-    // 判断图片类型
-    // if (!await isImage(file)) {
-    //   message.error({
-    //     content: '文件不是gif和png格式'
-    //   });
-    // } else {
-    //   message.success({
-    //     content: '文件格式正确'
-    //   });
-    // }
-
-    const chunks = this.createFileChunk(file);
-    const hash = await this.calculateHashWorker(chunks);
-    const hash1 = await this.calculateHashIdle(chunks);
-    // console.log(hash);
-    console.log(hash1);
-    this.setState({
-      loading: false
-    });
-
-    // 问一下后端，文件是否上传过，如果没有，是否有存在的切片
-    const { data: { data: { uploaded, uploadedList } } } = await axios.post('/api/checkFile', {
-      hash,
-      ext: file.name.split('.').pop()
-    });
-    if (uploaded) {
-      // 秒传
-      message.success({
-        content: '秒传成功'
-      });
-      return;
-    }
-    // 如果上传过
-    const chunksUpload = chunks.map((chunk, index) => {
-      // 切片的名字 hash+index
-      const name = `${hash}-${index}`;
-      return {
+      // 文件是否上传过，如果没有，是否有存在的切片。如果文件已经上传，则为秒传成功。
+      const { data: { data: { uploaded, uploadedList, url } } } = await axios.post('/api/checkFile', {
         hash,
-        name,
-        index,
-        chunk: chunk.file,
-        // 设置进度条，已经上传的，设为100
-        progress: uploadedList.indexOf(name) > -1 ? 100 : 0
-      };
-    });
+        // 截取文件后缀名
+        ext: file.name.split('.').pop()
+      });
+      // 文件已经存在后端了
+      if (uploaded) {
+      // 秒传
+        message.success({
+          content: '秒传成功'
+        });
+        this.setState({
+          loading: false,
+          url: url || ''
+        });
+        return;
+      }
+      // 如果上传过 => 需要更新所有已上传的文件信息
+      const chunksUpload = chunks.map((chunk, index) => {
+      // 切片的名字 hash + index
+        const name = `${hash}-${index}`;
+        return {
+          hash,
+          name,
+          index,
+          chunk: chunk.file,
+          // 设置进度条，已经上传的，设为100
+          progress: uploadedList.indexOf(name) > -1 ? 100 : 0
+        };
+      });
 
-    this.setState({
-      uploadChunks: chunksUpload
-    });
+      // 更新上传进度条
+      this.setState({
+        uploadChunks: chunksUpload
+      });
 
-    await this.uploadChunks(chunksUpload, uploadedList);
-
-    await this.mergeRequest(hash);
-
-    // const from = new FormData();
-    // from.append('name', 'file');
-    // from.append('file', file);
-    // const res = axios.post('/api/upload', from, {
-    //   onUploadProgress: progress => {
-    //     const { loaded, total } = progress;
-    //     const progress = Number(((loaded / total) * 100).toFixed(2));
-    //     this.setState({
-    //       progress
-    //     });
-    //   }
-    // });
-    // console.log(res);
+      // 上传文件块
+      await this.uploadChunks(chunksUpload, uploadedList);
+      // 上传完所有的小块后，发送一个合并文件的请求，后端把合并后的url返回
+      await this.mergeRequest(hash);
+    } catch (e) {
+      message.error('接口错误');
+    } finally {
+      this.setState({
+        loading: false
+      });
+    }
   }
 
+  /**
+   * 大文件分片
+   * @param {*} file
+   * @param {*} size
+   */
   createFileChunk = (file, size = CHUNK_SIZE) => {
     const chunks = [];
     let cur = 0;
@@ -114,15 +105,22 @@ class UploadFile extends PureComponent {
     return chunks;
   }
 
+  /**
+   * 文件一旦很大，计算hash就很耗时，采用Web worker不让浏览器卡死
+   * 使用 Web worker计算hash
+   * @param {Array} chunks
+   */
   calculateHashWorker = async (chunks) => new Promise(resolve => {
     this.worker = new Worker('/hash.js');
     this.worker.postMessage({ chunks });
     this.worker.onmessage = e => {
       const { progress, hash } = e.data;
+      // 获取到计算进度，实时更新
       const hashProgress = Number(progress.toFixed(2));
       this.setState({
         hashProgress
       });
+      // 整个文件hash计算好后，再返回
       if (hash) {
         resolve(hash);
       }
@@ -173,16 +171,19 @@ class UploadFile extends PureComponent {
     window.requestIdleCallback(workLoop);
   })
 
+  // 封装上传的 chunk list
   uploadChunks = async (chunks, uploadedList) => {
     const requests = chunks
       // 断点续传, 过滤掉已经上传的chunks
       .filter(chunk => uploadedList.indexOf(chunk.name) === -1)
       .map((chunk) => {
-      // 转成promise
+        // 每个chunk的上传都是用formData上传
         const form = new FormData();
         form.append('chunk', chunk.chunk);
         form.append('hash', chunk.hash);
         form.append('name', chunk.name);
+
+        // error:0 为目前上传的错误次数还是0次，用于断点续传
         return { form, index: chunk.index, error: 0 };
       });
       // .map(({ form, index }) => axios.post('/api/uploadSlice', form, {
@@ -210,124 +211,122 @@ class UploadFile extends PureComponent {
 
   mergeRequest = async (hash) => {
     const { file } = this.state;
-    await axios.post('/api/mergeFile', {
+    const { data: { data } } = await axios.post('/api/mergeFile', {
       ext: file.name.split('.').pop(),
       size: CHUNK_SIZE,
       hash
     });
+    if (data.url) {
+      this.setState({
+        url: data.url
+      });
+    }
   }
 
-  async sendRequest(chunks, limit = 2) {
-    return new Promise((resolve, reject) => {
-      const len = chunks.length;
-      let counter = 0;
-      let isStop = false;
-      const start = async () => {
-        if (isStop) {
-          return;
-        }
-        const task = chunks.shift();
-        if (task) {
-          const { form, index } = task;
+  /**
+   * 上传每个小块
+   * @param {*} chunks
+   * @param {*} limit
+   */
+   sendRequest = async (chunks, limit = 2) => new Promise((resolve, reject) => {
+     let isStop = false; // 超过重试次数直接终止
+     let counter = 0; // 已经上传的数量
+     const len = chunks.length;
+     const start = async () => {
+       if (isStop) {
+         return;
+       }
+       const task = chunks.shift();
+       if (task) {
+         const { form, index } = task;
+         try {
+           await axios.post('/api/uploadSlice', form, {
+             onUploadProgress: progress => {
+               this.setState(prev => {
+                 const stateChunks = prev.uploadChunks.map((chunk, i) => {
+                   if (i === index) {
+                     chunk.progress = Number(
+                       ((progress.loaded / progress.total) * 100).toFixed(2)
+                     );
+                   }
+                   return chunk;
+                 });
+                 return {
+                   uploadChunks: stateChunks
+                 };
+               });
+             }
+           });
 
-          try {
-            await axios.post('/api/uploadSlice', form, {
-              onUploadProgress: progress => {
-                this.setState(prev => {
-                  const stateChunks = prev.uploadChunks.map((chunk, i) => {
-                    if (i === index) {
-                      chunk.progress = Number(
-                        ((progress.loaded / progress.total) * 100).toFixed(2)
-                      );
-                    }
-                    return chunk;
-                  });
-                  return {
-                    uploadChunks: stateChunks
-                  };
-                });
-              }
-            });
-            if (counter === len - 1) {
-              // 最后一个任务
-              resolve();
-            } else {
-              counter += 1;
-              // 启动下一个任务
-              start();
-            }
-          } catch (e) {
-            this.setState(prev => {
-              prev.uploadChunks[index].progress = -1;
-              return {
-                uploadChunks: prev.uploadChunks
-              };
-            });
-            if (task.error < 3) {
-              task.error += 1;
-              chunks.unshift(task);
-              start();
-            } else {
-              // 错误三次
-              isStop = true;
-              reject();
-            }
-          }
-        }
-      };
+           if (counter === len - 1) {
+             // 最后一个任务
+             resolve();
+           } else {
+             counter += 1;
+             // 启动下一个任务
+             start();
+           }
+         } catch (e) {
+           this.setState(prev => {
+             prev.uploadChunks[index].progress = -1;
+             return {
+               uploadChunks: prev.uploadChunks
+             };
+           });
+           if (task.error < limit) {
+             task.error += 1;
+             chunks.unshift(task);
+             start();
+           } else {
+           // 错误三次
+             isStop = true;
+             reject();
+           }
+         }
+       }
+     };
+     start();
+   })
 
-      while (limit > 0) {
-        // 启动limit个任务
-        // 模拟一下延迟
-        // setTimeout(() => {
-        //   start();
-        // }, Math.random() * 2000);
-        start();
-        limit -= 1;
-      }
-    });
-  }
+   render() {
+     const {
+       hashProgress, loading, uploadChunks, file, url
+     } = this.state;
+     return (
+       <div className="content">
+         <input type="file" onChange={this.handleChange} />
 
-  render() {
-    const {
-      progress, hashProgress, loading, uploadChunks
-    } = this.state;
-    return (
-      <div className="content">
-        <input type="file" onChange={this.handleChange} />
+         <div className="flex">
+           <div>计算md5: </div>
+           <Progress percent={hashProgress} />
+         </div>
 
-        <div className="flex">
-          <div>上传进度: </div>
-          <Progress percent={progress} />
-        </div>
+         <p>
+           <Button
+             loading={loading}
+             disabled={!file}
+             type="primary" size="small" onClick={this.handleClick}>
+             Upload
+           </Button>
+         </p>
 
-        <div className="flex">
-          <div>计算md5: </div>
-          <Progress percent={hashProgress} />
-        </div>
+         <div className="cube-loading">
+           {uploadChunks.map(chunk => (
+             <Progress key={chunk.name} percent={chunk.progress} />
+           ))}
+         </div>
 
-        <p>
-          <Button
-            loading={loading}
-            type="primary" size="small" onClick={this.handleClick}>
-            Upload
-          </Button>
-        </p>
-
-        <div className="cube-loading">
-          {uploadChunks.map(chunk => (
-            <span
-              key={chunk.name} className={
-                // eslint-disable-next-line no-nested-ternary
-                chunk.progress < 0 ? 'error'
-                  : chunk.progress === 100 ? 'success' : 'loading'
-              }>
-            </span>
-          ))}
-        </div>
-      </div>
-    );
-  }
+         <div>
+           {url && (
+           // eslint-disable-next-line jsx-a11y/media-has-caption
+             <video width="480" controls>
+               <source src={url} type="video/mp4" />
+             </video>
+           )}
+         </div>
+       </div>
+     );
+   }
 }
 
 export default UploadFile;

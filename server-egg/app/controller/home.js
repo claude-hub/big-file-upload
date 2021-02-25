@@ -30,6 +30,11 @@ class HomeController extends BaseController {
 
     const file = ctx.request.files[0];
     const { hash, name } = ctx.request.body;
+    // if (name.split('-')[1] === '2') {
+    //   // eslint-disable-next-line no-return-assign
+    //   return ctx.status = 500;
+    // }
+
     const chunkPath = path.resolve(this.config.UPLOAD_DIR, hash);
     if (!fse.existsSync(chunkPath)) {
       await fse.mkdir(chunkPath);
@@ -43,7 +48,7 @@ class HomeController extends BaseController {
     const filePath = path.resolve(this.config.UPLOAD_DIR, `${hash}.${ext}`);
     await this.ctx.service.tools.mergeFile(filePath, hash, size);
     this.success({
-      url: `/public/upload/${hash}.${ext}`,
+      url: `http://127.0.0.1:7001/public/upload/${hash}.${ext}`,
     });
   }
 
@@ -63,6 +68,7 @@ class HomeController extends BaseController {
     this.success({
       uploaded,
       uploadedList,
+      url: `http://127.0.0.1:7001/public/upload/${hash}.${ext}`,
     });
   }
 
